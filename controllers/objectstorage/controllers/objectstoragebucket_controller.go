@@ -40,6 +40,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/rand"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
 )
 
 // OS = object storage, OSB = object storage bucket
@@ -56,6 +57,7 @@ type ObjectStorageBucketReconciler struct {
 	OSBDetectionCycle time.Duration
 	InternalEndpoint  string
 	ExternalEndpoint  string
+	ReconcileRequeue  bool
 }
 
 const (
@@ -287,7 +289,7 @@ func (r *ObjectStorageBucketReconciler) Reconcile(ctx context.Context, req ctrl.
 
 	r.Logger.V(1).Info("[bucket] bucket info", "name", bucket.Status.Name, "size", bucket.Status.Size, "policy", bucket.Spec.Policy)
 
-	return ctrl.Result{Requeue: true, RequeueAfter: r.OSBDetectionCycle}, nil
+	return ctrl.Result{Requeue: r.ReconcileRequeue, RequeueAfter: r.OSBDetectionCycle}, nil
 }
 
 func buildPolicy(policy, bucketName string) string {
@@ -398,7 +400,7 @@ func (r *ObjectStorageBucketReconciler) SetupWithManager(mgr ctrl.Manager) error
 	r.Logger = ctrl.Log.WithName("object-storage-bucket-controller")
 	r.Logger.V(1).Info("starting object storage bucket controller")
 
-	oSBDetectionCycleSecond := env.GetInt64EnvWithDefault(OSBDetectionCycleEnv, 300)
+	oSBDetectionCycleSecond := env.GetInt64EnvWithDefault(OSBDetectionCycleEnv, 3600)
 	r.OSBDetectionCycle = time.Duration(oSBDetectionCycleSecond) * time.Second
 
 	internalEndpoint := env.GetEnvWithDefault(OSInternalEndpointEnv, "")
@@ -413,11 +415,19 @@ func (r *ObjectStorageBucketReconciler) SetupWithManager(mgr ctrl.Manager) error
 	oSAdminSecret := env.GetEnvWithDefault(OSAdminSecret, "")
 	r.OSAdminSecret = oSAdminSecret
 
+	reconcileRequeue := env.GetBoolWithDefault(ReconcileRequeue, false)
+	r.ReconcileRequeue = reconcileRequeue
+
+	maxConcurrentReconciles := env.GetIntEnvWithDefault(MaxConcurrentReconciles, 1)
+
 	if internalEndpoint == "" || oSNamespace == "" || oSAdminSecret == "" {
 		return fmt.Errorf("failed to get the endpoint or namespace or admin secret env of object storage")
 	}
 
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&objectstoragev1.ObjectStorageBucket{}).
+		WithOptions(controller.Options{
+			MaxConcurrentReconciles: maxConcurrentReconciles,
+		}).
 		Complete(r)
 }
