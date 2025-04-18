@@ -39,8 +39,11 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/rand"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
+	"sigs.k8s.io/controller-runtime/pkg/event"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 )
 
 // OS = object storage, OSB = object storage bucket
@@ -425,7 +428,17 @@ func (r *ObjectStorageBucketReconciler) SetupWithManager(mgr ctrl.Manager) error
 	}
 
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&objectstoragev1.ObjectStorageBucket{}).
+		For(&objectstoragev1.ObjectStorageBucket{}, builder.WithPredicates(predicate.Funcs{
+			CreateFunc: func(event event.CreateEvent) bool {
+				bucket := event.Object.(*objectstoragev1.ObjectStorageBucket)
+				bucketName := bucket.Name
+				bucketNamespace := bucket.Namespace
+				username := strings.TrimPrefix(bucketNamespace, "ns-")
+				bucketStatusName := bucket.Status.Name
+
+				return bucketName != strings.TrimPrefix(bucketStatusName, username+"-")
+			},
+		})).
 		WithOptions(controller.Options{
 			MaxConcurrentReconciles: maxConcurrentReconciles,
 		}).
